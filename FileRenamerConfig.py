@@ -21,6 +21,13 @@ create_parental_path = True # If true, a directory structure will be created tha
                             # subdirectories for all parental studios.  File will be 
                             # moved to lowest level.
                             # If False, the file will not be moved from current directory
+                            
+create_collection_tags = True # this one is strange, admittedly.  Stash 'Tags' are stored in the 
+                              # NFO 'Genres' instead.  However Plex allows you to use smart
+                              # collections based on tags, so by default this will create tags
+                              # based on the site and parent studio, such as "Site: SiteName" 
+                              # and "Studio: StudioName".  Set this to False to disable creation
+                              # of these tags.
 headers = ""
 api_key = ""
 

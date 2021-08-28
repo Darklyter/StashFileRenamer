@@ -52,7 +52,7 @@ def main():
                 filedata['basename'] = os.path.splitext(file)[0]
                 filedata['fullpathname'] = renamefile(filedata, args)
                 getimage(filedata)
-                nfodata = generateNFO(filedata['jsondata'],{})
+                nfodata = generateNFO(filedata['jsondata'],args)
                 writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
             else:
                 print(f' *** Scene data not found for {basename}')
@@ -269,8 +269,11 @@ def generateNFO(scene, args):
         parent = scene['studio']['parent_studio']['name']
     else:
         parent = scene['studio']['name']
-    tags = '<tag>Site: {}</tag>\n'.format(scene['studio']['name'])
-    tags += '<tag>Studio: {}</tag>\n'.format(parent)
+    if config.create_collection_tags:
+        tags = '<tag>Site: {}</tag>\n'.format(scene['studio']['name'])
+        tags += '<tag>Studio: {}</tag>\n'.format(parent)
+    else:
+        tags = ""
     
 
     # ~ genres = []
