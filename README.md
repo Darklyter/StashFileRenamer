@@ -1,6 +1,6 @@
 # StashFileRenamer
 
-This is a simple (and ugly) python script to process a directory of files into something useable by systems that use sidecar files such as Kodi or Plex.
+This is a simple (and ugly) python script to process a directory of files into something useable by systems that use sidecar files such as Kodi or Plex (Plex with XBMCNfoImport plugin: https://github.com/gboudreau/XBMCnfoMoviesImporter.bundle).
 
 WithoutPants has a Stash plugin to do the same sort of thing (https://github.com/stashapp/CommunityScripts/tree/main/scripts/kodi-helper), but it doesn't do file renaming
 
