@@ -163,8 +163,8 @@ def renamefile(filedata, args):
     filepathname = fullpath + targetname
     origfile = filedata['filename']
     print(f' Moving file: {origfile} to {filepathname}')
-    # ~ shutil.move(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
-    shutil.copy(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
+    shutil.move(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
+    # ~ shutil.copy(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
 
     # Return the path and bare filename to be used for NFO and JPG
     return filepathname
