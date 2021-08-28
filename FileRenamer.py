@@ -40,6 +40,7 @@ def main():
     # ~ filelist = [f for f in os.listdir('.') if os.path.isfile(f)]
     filelist = glob.glob(args.mask.strip())
     if filelist:
+        filelist = [f for f in filelist if os.path.isfile(f)]    
         for file in filelist:
             basename = os.path.splitext(file)[0]
             jsonresult = callGraphQL(config.file_query.replace("<FILENAME>", basename), config.server, config.auth)
