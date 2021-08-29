@@ -35,7 +35,7 @@ file_query = """
     query {
       findScenes(
         scene_filter: { path: { value: 
-          "\"<FILENAME>\"", 
+          "\\"<FILENAME>\\"", 
           modifier: INCLUDES } }
       ) {
         scenes {

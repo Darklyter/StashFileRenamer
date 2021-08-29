@@ -16,6 +16,7 @@ import json
 import glob
 import requests
 import shutil
+import logging
 
 import FileRenamerConfig as config
 
@@ -86,7 +87,7 @@ def callGraphQL(query, server, http_auth_type, retry = True):
             jwtAuth()
             return callGraphQL(query, variables, False)
         else:
-            logging.error("GraphQL query failed to run by returning code of {}. Query: {}.  Variables: {}".format(response.status_code, query, variables), exc_info=debug_mode)
+            logging.error("GraphQL query failed to run by returning code of {}. Query: {}.".format(response.status_code, query))
             raise Exception("GraphQL error")
     except requests.exceptions.SSLError:
         proceed = input("Caught certificate error trying to talk to Stash. Add ignore_ssl_warnings=True to your configuration.py to ignore permanently. Ignore for now? (yes/no):")
@@ -221,7 +222,7 @@ def generateNFO(scene, args):
 
     genres = ""
     for t in scene["tags"]:
-        if t['id'] not in config.ignore_tags:
+        if t['id'] not in config.ignore_tags and "ambiguous" not in t['name'].lower():
             genres = genres + """
         <genre>{}</genre>""".format(t["name"])
 
