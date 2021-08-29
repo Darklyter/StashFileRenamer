@@ -45,18 +45,21 @@ def main():
             basename = os.path.splitext(file)[0]
             jsonresult = callGraphQL(config.file_query.replace("<FILENAME>", basename), config.server, config.auth)
             # We only want to process files that have a Studio defined
-            if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
-                filedata = {}
-                filedata['jsondata'] = jsonresult['data']['findScenes']['scenes'][0]
-                filedata['studiolist'] = get_parental_path(filedata['jsondata']['studio']['id'])
-                filedata['filename'] = file
-                filedata['basename'] = os.path.splitext(file)[0]
-                filedata['fullpathname'] = renamefile(filedata, args)
-                getimage(filedata)
-                nfodata = generateNFO(filedata['jsondata'],args)
-                writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
-            else:
-                print(f' *** Scene data not found for {basename}')
+            try:
+                if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
+                    filedata = {}
+                    filedata['jsondata'] = jsonresult['data']['findScenes']['scenes'][0]
+                    filedata['studiolist'] = get_parental_path(filedata['jsondata']['studio']['id'])
+                    filedata['filename'] = file
+                    filedata['basename'] = os.path.splitext(file)[0]
+                    filedata['fullpathname'] = renamefile(filedata, args)
+                    getimage(filedata)
+                    nfodata = generateNFO(filedata['jsondata'],args)
+                    writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
+                else:
+                    print(f' *** Scene data not found for {basename}')
+            except:
+                print(f' Skipping file: {basename}')
 
 
 def callGraphQL(query, server, http_auth_type, retry = True):
@@ -196,8 +199,7 @@ def getSceneTitle(scene):
     return basename(scene["path"])    
         
 def generateNFO(scene, args):
-    ret = """
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+    ret = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <movie>
     <title>{title}</title>
     <userrating>{rating}</userrating>
