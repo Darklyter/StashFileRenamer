@@ -4,7 +4,7 @@
 # Files will be moved to a subdirectory tree based on Studio parents
 # as defined in Stash
 # The query is based on filename, so if the file has not been scraped /
-# tagged in Stash then it will be skipped.  It uses the Studio attribute 
+# tagged in Stash then it will be skipped.  It uses the Studio attribute
 # to determine whether to parse or not
 # Most code 'borrowed' heavily from WithoutPants' Kodi Helper (https://github.com/stashapp/CommunityScripts/tree/main/scripts/kodi-helper)
 # and the TPDB Stash scraper (https://github.com/ThePornDatabase/stash_theporndb_scraper)
@@ -29,19 +29,19 @@ def parseArgs():
 
 def main():
     args = parseArgs()
-   
+
     if config.use_https:
         server = 'https://' + str(config.server_ip) + ':' + str(config.server_port)
     else:
-        server = 'http://' + str(config.server_ip) + ':' + str(config.server_port)    
+        server = 'http://' + str(config.server_ip) + ':' + str(config.server_port)
     config.server = server
     config.auth = setAuth(server)
-    
+
     # Iterate through current directory
     # ~ filelist = [f for f in os.listdir('.') if os.path.isfile(f)]
     filelist = glob.glob(args.mask.strip())
     if filelist:
-        filelist = [f for f in filelist if os.path.isfile(f)]    
+        filelist = [f for f in filelist if os.path.isfile(f)]
         for file in filelist:
             basename = os.path.splitext(file)[0]
             jsonresult = callGraphQL(config.file_query.replace("<FILENAME>", basename), config.server, config.auth)
@@ -59,15 +59,15 @@ def main():
                     writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
                 else:
                     print(f' *** Scene data not found for {basename}')
-            except:
-                print(f' Skipping file: {basename}')
+            except Exception as e:
+                print(f' Skipping file: {basename} due to {e}')
 
 
 def callGraphQL(query, server, http_auth_type, retry = True):
     graphql_server = server+"/graphql"
     json = {}
     json['query'] = query
-    
+
     try:
         if http_auth_type == "basic":
             response = requests.post(graphql_server, json=json, headers=config.headers, auth=(username, password), verify= not config.ignore_ssl_warnings)
@@ -75,7 +75,7 @@ def callGraphQL(query, server, http_auth_type, retry = True):
             response = requests.post(graphql_server, json=json, headers=config.headers, cookies={'session':auth_token}, verify= not config.ignore_ssl_warnings)
         else:
             response = requests.post(graphql_server, json=json, headers=config.headers, verify= not config.ignore_ssl_warnings)
-        
+
         if response.status_code == 200:
             result = response.json()
             if result.get("error", None):
@@ -122,24 +122,27 @@ def renamefile(filedata, args):
     nameformat = config.name_format
     # Need to create folder structure if not there
     fullpath = args.outdir.strip()
-        
+
     if config.create_parental_path:
         for item in reversed(filedata['studiolist']):
             studiopath = re.sub(r'[^-a-zA-Z0-9_.() ]+', '', filedata['studiolist'][item])
             fullpath = fullpath + studiopath.strip() + "/"
         if not os.path.exists(fullpath):
-            os.makedirs(fullpath,exist_ok = True)    
+            os.makedirs(fullpath,exist_ok = True)
 
     # Set up filename to use
     data = filedata['jsondata']
     performers = []
+    counter = 0
     for performer in data['performers']:
-        performers.append(performer['name'])
+        if counter < 3:
+            performers.append(performer['name'])
+            counter += 1
     if performers:
         performerstring = ", ".join(performers)
     else:
         performerstring = ""
-    
+
     tags = []
     for tag in data['tags']:
         tags.append(tag['name'])
@@ -147,15 +150,18 @@ def renamefile(filedata, args):
         tagstring = ", ".join(tags)
     else:
         tagstring = ""
-    
+
     targetname = config.name_format
     targetname = targetname.replace("<STUDIO>", data['studio']['name'].strip().title())
-    
+
     if not data['studio']['parent_studio'] is None:
         parentname = data['studio']['parent_studio']['name'].strip().title()
     else:
         parentname = data['studio']['name'].strip().title()
-    
+
+    if len(data['title']) > 100:
+        data['title'] = data['title'].strip().title()[0:100]
+
     targetname = targetname.replace("<PARENT>", parentname)
     targetname = targetname.replace("<TITLE>", data['title'].strip().title())
     targetname = targetname.replace("<ID>", data['id'].strip())
@@ -173,7 +179,7 @@ def renamefile(filedata, args):
 
     # Return the path and bare filename to be used for NFO and JPG
     return filepathname
-    
+
 def getimage(filedata):
     if not filedata['jsondata']['paths'] is None:
         imagepath = filedata['jsondata']['paths']['screenshot']
@@ -196,9 +202,9 @@ def addAPIKey(url):
 def getSceneTitle(scene):
     if scene["title"] != None and scene["title"] != "":
         return scene["title"]
-    
-    return basename(scene["path"])    
-        
+
+    return basename(scene["path"])
+
 def generateNFO(scene, args):
     ret = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <movie>
@@ -268,7 +274,7 @@ def generateNFO(scene, args):
         fanart.append("""<thumb>{}</thumb>""".format(logo))
 
     fanart = """<fanart>{}</fanart>""".format("\n".join(fanart))
-    
+
     if not scene['studio']['parent_studio'] is None:
         parent = scene['studio']['parent_studio']['name']
     else:
@@ -278,7 +284,7 @@ def generateNFO(scene, args):
         tags += '<tag>Studio: {}</tag>\n'.format(parent)
     else:
         tags = ""
-    
+
 
     # ~ genres = []
     # ~ if args.genre != None:
@@ -288,7 +294,7 @@ def generateNFO(scene, args):
     ret = ret.format(title = getSceneTitle(scene), rating = rating, id = scene["id"], tags = tags, date = date, studio = studio, performers = performers, details = scene["details"] or "", thumbs = "\n".join(thumbs), fanart = fanart, genres = genres)
 
     return ret
-    
+
 
 def writeFile(fn, data, useUTF):
     encoding = None
@@ -297,8 +303,8 @@ def writeFile(fn, data, useUTF):
     f = open(fn, "w", encoding=encoding)
     f.write(data)
     f.close()
-            
-    
+
+
 def get_parental_path(studioid):
     basequery = """
         query {
