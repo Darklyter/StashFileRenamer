@@ -11,21 +11,22 @@ ignore_tags = ['1','2','3318','6279'] # The ID numbers of tags to not write to N
 # <PARENT>      =   The name of the 'Parent' studio.  If there is no parent,
 #                   it will be replaced by scene studio
 # <TITLE>       =   Title of the scene, as stored in Stash
-# <DATE>        =   Date of the scenne, as stoed in Stash (will be YYY-MM-DD format)
+# <DATE>        =   Date of the scene, as stoed in Stash (will be YYY-MM-DD format)
 # <ID>          =   Internal Stash ID of scene
 # <TAGS>        =   The associated tag names, will be separated by ", "
-# <PERFORMERS>  =   Names of associated performers, separated by ", "
+# <PERFORMERS>  =   Names of associated performers, separated by ", " and surrounded by ().  Ie. (Mia Malkova, Keisha Grey)
+# <DIMENSION>   =   Dimensions of the video in '[WIDTHxHEIGHT]' format.  Ie. [1920x1080]
 # ~ name_format = "<STUDIO> - <DATE> - <TITLE> (<PERFORMERS>)"
-name_format = "<STUDIO> - <DATE> - <TITLE> (<PERFORMERS>)"
+name_format = "<STUDIO> - <DATE> - <TITLE> <PERFORMERS> <DIMENSIONS>"
 create_parental_path = True # If true, a directory structure will be created that includes
-                            # subdirectories for all parental studios.  File will be 
+                            # subdirectories for all parental studios.  File will be
                             # moved to lowest level.
                             # If False, the file will not be moved from current directory
-                            
-create_collection_tags = True # this one is strange, admittedly.  Stash 'Tags' are stored in the 
+
+create_collection_tags = True # this one is strange, admittedly.  Stash 'Tags' are stored in the
                               # NFO 'Genres' instead.  However Plex allows you to use smart
                               # collections based on tags, so by default this will create tags
-                              # based on the site and parent studio, such as "Site: SiteName" 
+                              # based on the site and parent studio, such as "Site: SiteName"
                               # and "Studio: StudioName".  Set this to False to disable creation
                               # of these tags.
 headers = ""
@@ -34,8 +35,8 @@ api_key = ""
 file_query = """
     query {
       findScenes(
-        scene_filter: { path: { value: 
-          "\\"<FILENAME>\\"", 
+        scene_filter: { path: { value:
+          "\\"<FILENAME>\\"",
           modifier: INCLUDES } }
       ) {
         scenes {
@@ -58,7 +59,7 @@ file_query = """
               id
               name
               details
-            }                
+            }
           }
           tags{
             id
@@ -72,6 +73,10 @@ file_query = """
             movie{
               name
             }
+          }
+          file{
+            width
+            height
           }
         }
       }

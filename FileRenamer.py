@@ -140,6 +140,7 @@ def renamefile(filedata, args):
             counter += 1
     if performers:
         performerstring = ", ".join(performers)
+        performerstring = f"({performerstring.strip()})"
     else:
         performerstring = ""
 
@@ -159,6 +160,11 @@ def renamefile(filedata, args):
     else:
         parentname = data['studio']['name'].strip().title()
 
+    if not data['file']['width'] is None and not data['file']['height'] is None:
+        dimensions = F"[{str(data['file']['width'])}x{str(data['file']['height'])}]"
+    else:
+        dimensions = ""
+
     if len(data['title']) > 100:
         data['title'] = data['title'].strip().title()[0:100]
 
@@ -168,6 +174,7 @@ def renamefile(filedata, args):
     targetname = targetname.replace("<DATE>", data['date'].strip())
     targetname = targetname.replace("<PERFORMERS>", performerstring)
     targetname = targetname.replace("<TAGS>", tagstring)
+    targetname = targetname.replace("<DIMENSIONS>", dimensions)
     targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\] ,]+', '', targetname)
 
     # Now move the file
