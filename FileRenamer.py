@@ -44,7 +44,8 @@ def main():
         filelist = [f for f in filelist if os.path.isfile(f)]
         for file in filelist:
             basename = os.path.splitext(file)[0]
-            jsonresult = callGraphQL(config.file_query.replace("<FILENAME>", basename), config.server, config.auth)
+            query = config.file_query.replace("<FILENAME>", basename)
+            jsonresult = callGraphQL(query, config.server, config.auth)
             # We only want to process files that have a Studio defined
             try:
                 if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
@@ -60,8 +61,10 @@ def main():
                 else:
                     print(f' *** Scene data not found for {basename}')
             except Exception as e:
-                print(f' Skipping file: {basename} due to {e}')
-
+                if not os.path.exists("NotInStash"):
+                    os.makedirs("NotInStash",exist_ok = True)
+                print(f' Moving file: {basename} into NotInStash/ due to {e}')
+                shutil.move(file, "NotInStash/" + file)
 
 def callGraphQL(query, server, http_auth_type, retry = True):
     graphql_server = server+"/graphql"

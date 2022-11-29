@@ -1,5 +1,5 @@
 use_https = False # Set to False for HTTP
-server_ip = "192.168.1.151"  #Don't include the '<' or '>'
+server_ip = "192.168.1.71"  #Don't include the '<' or '>'
 server_port = "9999" #Don't include the '<' or '>'
 username = "<USERNAME>" #Don't include the '<' or '>'
 password = "<PASSWORD>" #Don't include the '<' or '>'
@@ -17,7 +17,7 @@ ignore_tags = ['1','2','3318','6279'] # The ID numbers of tags to not write to N
 # <PERFORMERS>  =   Names of associated performers, separated by ", " and surrounded by ().  Ie. (Mia Malkova, Keisha Grey)
 # <DIMENSION>   =   Dimensions of the video in '[WIDTHxHEIGHT]' format.  Ie. [1920x1080]
 # ~ name_format = "<STUDIO> - <DATE> - <TITLE> (<PERFORMERS>)"
-name_format = "<STUDIO> - <DATE> - <TITLE> <PERFORMERS> <DIMENSIONS>"
+name_format = "<STUDIO> <DATE> <TITLE> <PERFORMERS> <DIMENSIONS>"
 create_parental_path = True # If true, a directory structure will be created that includes
                             # subdirectories for all parental studios.  File will be
                             # moved to lowest level.
