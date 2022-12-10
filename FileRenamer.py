@@ -180,6 +180,10 @@ def renamefile(filedata, args):
     targetname = targetname.replace("<DIMENSIONS>", dimensions)
     targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\] ,]+', '', targetname)
 
+    # Have to strip possible S##E## for Plex
+    if re.search(r'([sS]\d{1,3}:?[eE]\d{1,3})', targetname):
+        targetname = re.sub(r'[sS]\d{1,3}:?[eE]\d{1,3}', '', targetname)
+
     # Now move the file
     filepathname = fullpath + targetname
     origfile = filedata['filename']
