@@ -178,7 +178,13 @@ def renamefile(filedata, args):
     targetname = targetname.replace("<PERFORMERS>", performerstring)
     targetname = targetname.replace("<TAGS>", tagstring)
     targetname = targetname.replace("<DIMENSIONS>", dimensions)
-    targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\] ,]+', '', targetname)
+    if re.search(r'([\\/])', targetname):
+        addpath = re.search(r'(.*[\\/])', targetname).group(1)
+        fullpath = fullpath + addpath
+        if not os.path.exists(fullpath):
+            os.makedirs(fullpath,exist_ok = True)
+        targetname =  re.search(r'.*[\\/](.*?)$', targetname).group(1)
+    targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\] ,\\/]+', '', targetname)
 
     # Have to strip possible S##E## for Plex
     if re.search(r'([sS]\d{1,3}:?[eE]\d{1,3})', targetname):
