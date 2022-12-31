@@ -130,6 +130,7 @@ def renamefile(filedata, args):
         for item in reversed(filedata['studiolist']):
             studiopath = re.sub(r'[^-a-zA-Z0-9_.() ]+', '', filedata['studiolist'][item])
             fullpath = fullpath + studiopath.strip() + "/"
+            fullpath = fullpath.title()
         if not os.path.exists(fullpath):
             os.makedirs(fullpath,exist_ok = True)
 
@@ -181,14 +182,16 @@ def renamefile(filedata, args):
     if re.search(r'([\\/])', targetname):
         addpath = re.search(r'(.*[\\/])', targetname).group(1)
         fullpath = fullpath + addpath
+        fullpath = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,\\/]+', '', fullpath).title()
+
         if not os.path.exists(fullpath):
             os.makedirs(fullpath,exist_ok = True)
         targetname =  re.search(r'.*[\\/](.*?)$', targetname).group(1)
-    targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\] ,\\/]+', '', targetname)
+    targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,]+', '', targetname)
 
     # Have to strip possible S##E## for Plex
     if re.search(r'([sS]\d{1,3}:?[eE]\d{1,3})', targetname):
-        targetname = re.sub(r'[sS]\d{1,3}:?[eE]\d{1,3}', '', targetname)
+        targetname = re.sub(r'[sS]\d{1,3}:?[eE]\d{1,3}', '', targetname).title()
 
     # Now move the file
     filepathname = fullpath + targetname
