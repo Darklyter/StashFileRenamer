@@ -25,6 +25,7 @@ def parseArgs():
     parser.add_argument("--indir", metavar="<input directory>", help="Directory containing files to process (Default to '.')",default="./")
     parser.add_argument("--outdir", metavar="<output directory>", help="Generate files in <outdir> (Default to '.')",default="./")
     parser.add_argument("--mask", metavar="<filemask>", help="File mask to process.  Defaults to '*'", default="*")
+    parser.add_argument("--extra", help="Also write JPG and NFO files", default=False)
     return parser.parse_args()
 
 def main():
@@ -55,9 +56,11 @@ def main():
                     filedata['filename'] = file
                     filedata['basename'] = os.path.splitext(file)[0]
                     filedata['fullpathname'] = renamefile(filedata, args)
-                    getimage(filedata)
-                    nfodata = generateNFO(filedata['jsondata'],args)
-                    writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
+                    if 'extras' in args:
+                        if args.extras:
+                            getimage(filedata)
+                            nfodata = generateNFO(filedata['jsondata'], args)
+                            writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
                 else:
                     print(f' *** Scene data not found for {basename}')
             except Exception as e:
@@ -169,9 +172,10 @@ def renamefile(filedata, args):
     else:
         dimensions = ""
 
+    data['title'] = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data['title']).title()
+
     if len(data['title']) > 100:
         data['title'] = data['title'].strip().title()[0:100]
-
     targetname = targetname.replace("<PARENT>", parentname)
     targetname = targetname.replace("<TITLE>", data['title'].strip().title())
     targetname = targetname.replace("<ID>", data['id'].strip())
@@ -195,9 +199,15 @@ def renamefile(filedata, args):
 
     # Now move the file
     filepathname = fullpath + targetname
+    filepathname = filepathname.replace("  ", " ")
+    extension = os.path.splitext(filedata['filename'])[-1]
+
+    if len(os.getcwd() + filepathname) > 255:
+        filepathname = filepathname.replace(performerstring, "")
+
     origfile = filedata['filename']
     print(f' Moving file: {origfile} to {filepathname}')
-    shutil.move(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
+    shutil.move(origfile, filepathname + extension)
     # ~ shutil.copy(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
 
     # Return the path and bare filename to be used for NFO and JPG
