@@ -117,12 +117,14 @@ def setAuth(server):
         http_auth_type="basic"
     return http_auth_type
 
+
 def jwtAuth():
     response = requests.post(server+"/login", data = {'username':config.username, 'password':config.password}, verify= not config.ignore_ssl_warnings)
     auth_token=response.cookies.get('session',None)
     if not auth_token:
         logging.error("Error authenticating with Stash.  Double check your IP, Port, Username, and Password", exc_info=debug_mode)
         sys.exit()
+
 
 def renamefile(filedata, args):
     nameformat = config.name_format
@@ -135,7 +137,7 @@ def renamefile(filedata, args):
             fullpath = fullpath + studiopath.strip() + "/"
             fullpath = fullpath.title()
         if not os.path.exists(fullpath):
-            os.makedirs(fullpath,exist_ok = True)
+            os.makedirs(fullpath, exist_ok=True)
 
     # Set up filename to use
     data = filedata['jsondata']
@@ -167,10 +169,12 @@ def renamefile(filedata, args):
     else:
         parentname = data['studio']['name'].strip().title()
 
-    if not data['file']['width'] is None and not data['file']['height'] is None:
-        dimensions = F"[{str(data['file']['width'])}x{str(data['file']['height'])}]"
+    dimensions = ""
+    if re.search(r'\[(\d+p)\]', filedata['filename']):
+        dimensions = re.search(r'(\[\d+p\])', filedata['filename']).group(1)
     else:
-        dimensions = ""
+        if not data['file']['width'] is None and not data['file']['height'] is None:
+            dimensions = F"[{str(data['file']['width'])}x{str(data['file']['height'])}]"
 
     data['title'] = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data['title']).title()
 
@@ -189,8 +193,8 @@ def renamefile(filedata, args):
         fullpath = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,\\/]+', '', fullpath).title()
 
         if not os.path.exists(fullpath):
-            os.makedirs(fullpath,exist_ok = True)
-        targetname =  re.search(r'.*[\\/](.*?)$', targetname).group(1)
+            os.makedirs(fullpath, exist_ok=True)
+        targetname = re.search(r'.*[\\/](.*?)$', targetname).group(1)
     targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,]+', '', targetname)
 
     # Have to strip possible S##E## for Plex
@@ -213,6 +217,7 @@ def renamefile(filedata, args):
     # Return the path and bare filename to be used for NFO and JPG
     return filepathname
 
+
 def getimage(filedata):
     if not filedata['jsondata']['paths'] is None:
         imagepath = filedata['jsondata']['paths']['screenshot']
@@ -233,10 +238,11 @@ def addAPIKey(url):
 
 
 def getSceneTitle(scene):
-    if scene["title"] != None and scene["title"] != "":
+    if scene["title"] is not None and scene["title"] != "":
         return scene["title"]
 
     return basename(scene["path"])
+
 
 def generateNFO(scene, args):
     ret = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
@@ -256,7 +262,7 @@ def generateNFO(scene, args):
 """
     # ~ tags = ""
     # ~ for t in scene["tags"]:
-        # ~ tags = tags + """
+    # ~ tags = tags + """
     # ~ <tag>{}</tag>""".format(t["name"])
 
     genres = ""
@@ -266,16 +272,16 @@ def generateNFO(scene, args):
         <genre>{}</genre>""".format(t["name"])
 
     rating = ""
-    if scene["rating"] != None:
-        rating = str(int(scene["rating"])*2)
+    if scene["rating"] is not None:
+        rating = str(int(scene["rating"]) * 2)
 
     date = ""
-    if scene["date"] != None:
+    if scene["date"] is not None:
         date = scene["date"]
 
     studio = ""
     logo = ""
-    if scene["studio"] != None:
+    if scene["studio"] is not None:
         studio = scene["studio"]["name"]
         logo = scene["studio"]["image_path"]
         if not logo.endswith("?default=true"):
@@ -318,13 +324,12 @@ def generateNFO(scene, args):
     else:
         tags = ""
 
-
     # ~ genres = []
     # ~ if args.genre != None:
-        # ~ for g in args.genre:
-            # ~ genres.append("<genre>{}</genre>".format(g))
+    # ~ for g in args.genre:
+    # ~ genres.append("<genre>{}</genre>".format(g))
 
-    ret = ret.format(title = getSceneTitle(scene), rating = rating, id = scene["id"], tags = tags, date = date, studio = studio, performers = performers, details = scene["details"] or "", thumbs = "\n".join(thumbs), fanart = fanart, genres = genres)
+    ret = ret.format(title=getSceneTitle(scene), rating=rating, id=scene["id"], tags=tags, date=date, studio=studio, performers=performers, details=scene["details"] or "", thumbs="\n".join(thumbs), fanart=fanart, genres=genres)
 
     return ret
 
