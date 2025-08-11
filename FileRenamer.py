@@ -11,6 +11,7 @@
 import argparse
 import os
 import re
+import string
 import argparse
 import json
 import glob
@@ -44,36 +45,54 @@ def main():
     if filelist:
         filelist = [f for f in filelist if os.path.isfile(f)]
         for file in filelist:
+            # ~ print(file)
             basename = os.path.splitext(file)[0]
+            basename = basename.strip()
+            basename = basename.rstrip(string.punctuation)
+
+            part_num = re.search(r'(.*)-\d+$', basename)
+            if part_num and ".zip" in file:
+                basename = part_num.group(1)
+
+            # ~ print(basename)
             query = config.file_query.replace("<FILENAME>", basename)
             jsonresult = callGraphQL(query, config.server, config.auth)
             # We only want to process files that have a Studio defined
             try:
-                if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
-                    filedata = {}
-                    filedata['jsondata'] = jsonresult['data']['findScenes']['scenes'][0]
-                    filedata['studiolist'] = get_parental_path(filedata['jsondata']['studio']['id'])
-                    filedata['filename'] = file
-                    filedata['basename'] = os.path.splitext(file)[0]
-                    filedata['fullpathname'] = renamefile(filedata, args)
-                    if 'extras' in args:
-                        if args.extras:
-                            getimage(filedata)
-                            nfodata = generateNFO(filedata['jsondata'], args)
-                            writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
+                if len(jsonresult['data']['findScenes']['scenes']):
+                    if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
+                        filedata = {}
+                        filedata['jsondata'] = jsonresult['data']['findScenes']['scenes'][0]
+                        if len(filedata['jsondata']['files']) == 1:
+                            filedata['studiolist'] = get_parental_path(filedata['jsondata']['studio']['id'])
+                            filedata['filename'] = file
+                            filedata['basename'] = os.path.splitext(file)[0]
+                            filedata['extension'] = os.path.splitext(filedata['filename'])[-1]
+                            filedata['fullpathname'] = renamefile(filedata, args)
+
+                            if 'extras' in args:
+                                if args.extras:
+                                    getimage(filedata)
+                                    nfodata = generateNFO(filedata['jsondata'], args)
+                                    writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
+                        else:
+                            print(f" *** Aborting rename due to multiple files being present in Stash.  {file}")
+                    else:
+                        print(f' *** Scene data not found for {basename}')
                 else:
-                    print(f' *** Scene data not found for {basename}')
+                        print(f' *** File not found in Stash database: {basename}')
             except Exception as e:
-                if not os.path.exists("NotInStash"):
-                    os.makedirs("NotInStash",exist_ok = True)
-                print(f' Moving file: {basename} into NotInStash/ due to {e}')
-                shutil.move(file, "NotInStash/" + file)
+                ## ~ if not os.path.exists("NotInStash"):
+                    ## ~ os.makedirs("NotInStash",exist_ok = True)
+                ## ~ print(f' Moving file: {basename} into NotInStash/ due to {e}')
+                ## ~ shutil.move(file, "NotInStash/" + file)
+                print(f' Error Ocurred due to {e}')
 
 def callGraphQL(query, server, http_auth_type, retry = True):
     graphql_server = server+"/graphql"
     json = {}
     json['query'] = query
-
+    # ~ print(query)
     try:
         if http_auth_type == "basic":
             response = requests.post(graphql_server, json=json, headers=config.headers, auth=(username, password), verify= not config.ignore_ssl_warnings)
@@ -119,7 +138,7 @@ def setAuth(server):
 
 
 def jwtAuth():
-    response = requests.post(server+"/login", data = {'username':config.username, 'password':config.password}, verify= not config.ignore_ssl_warnings)
+    response = requests.post(server+"/login", data={'username':config.username, 'password':config.password}, verify= not config.ignore_ssl_warnings)
     auth_token=response.cookies.get('session',None)
     if not auth_token:
         logging.error("Error authenticating with Stash.  Double check your IP, Port, Username, and Password", exc_info=debug_mode)
@@ -131,6 +150,13 @@ def renamefile(filedata, args):
     # Need to create folder structure if not there
     fullpath = args.outdir.strip()
 
+    # Have to handle Gallery files
+    if ".zip" in filedata['extension'].lower():
+        fullpath = fullpath + "Galleries/"
+        set_gallery = True
+    else:
+        set_gallery = False
+
     if config.create_parental_path:
         for item in reversed(filedata['studiolist']):
             studiopath = re.sub(r'[^-a-zA-Z0-9_.() ]+', '', filedata['studiolist'][item])
@@ -140,7 +166,7 @@ def renamefile(filedata, args):
             os.makedirs(fullpath, exist_ok=True)
 
     # Set up filename to use
-    data = filedata['jsondata']
+    data=filedata['jsondata']
     performers = []
     counter = 0
     for performer in data['performers']:
@@ -173,20 +199,30 @@ def renamefile(filedata, args):
     if re.search(r'\[(\d+p)\]', filedata['filename']):
         dimensions = re.search(r'(\[\d+p\])', filedata['filename']).group(1)
     else:
-        if not data['file']['width'] is None and not data['file']['height'] is None:
-            dimensions = F"[{str(data['file']['width'])}x{str(data['file']['height'])}]"
+        if not data['files'][0]['width'] is None and not data['files'][0]['height'] is None:
+            dimensions = F"[{str(data['files'][0]['width'])}x{str(data['files'][0]['height'])}]"
 
     data['title'] = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data['title']).title()
 
     if len(data['title']) > 100:
         data['title'] = data['title'].strip().title()[0:100]
+
+    if len(data['code']) > 50:
+        data['code'] = truncate_string(data['code'].strip())
+
     targetname = targetname.replace("<PARENT>", parentname)
-    targetname = targetname.replace("<TITLE>", data['title'].strip().title())
+    targetname = targetname.replace("<TITLE>", string.capwords(data['title'].strip()))
     targetname = targetname.replace("<ID>", data['id'].strip())
     targetname = targetname.replace("<DATE>", data['date'].strip())
-    targetname = targetname.replace("<PERFORMERS>", performerstring)
-    targetname = targetname.replace("<TAGS>", tagstring)
-    targetname = targetname.replace("<DIMENSIONS>", dimensions)
+    targetname = targetname.replace("<STUDIOID>", data['code'].strip())
+    if set_gallery:
+        targetname = targetname.replace("<PERFORMERS>", "")
+        targetname = targetname.replace("<TAGS>", "")
+        targetname = targetname.replace("<DIMENSIONS>", "")
+    else:
+        targetname = targetname.replace("<PERFORMERS>", performerstring)
+        targetname = targetname.replace("<TAGS>", tagstring)
+        targetname = targetname.replace("<DIMENSIONS>", dimensions)
     if re.search(r'([\\/])', targetname):
         addpath = re.search(r'(.*[\\/])', targetname).group(1)
         fullpath = fullpath + addpath
@@ -203,14 +239,25 @@ def renamefile(filedata, args):
 
     # Now move the file
     filepathname = fullpath + targetname
-    filepathname = filepathname.replace("  ", " ")
+    filepathname = filepathname.replace("  ", " ").strip()
     extension = os.path.splitext(filedata['filename'])[-1]
 
     if len(os.getcwd() + filepathname) > 255:
         filepathname = filepathname.replace(performerstring, "")
 
     origfile = filedata['filename']
-    print(f' Moving file: {origfile} to {filepathname}')
+
+    if len(origfile) < 75:
+        spaces = 75 - len(origfile)
+    else:
+        spaces = 0
+
+    part_num = re.search(r'-(\d+)\.\w+$', origfile)
+    if part_num:
+        part_num = part_num.group(1)
+        filepathname = f"{filepathname}-File{part_num}"
+
+    print(f' Moving file: {origfile} {spaces * " "}To: {filepathname.lstrip("./")}')
     shutil.move(origfile, filepathname + extension)
     # ~ shutil.copy(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
 
@@ -373,6 +420,20 @@ def get_parental_path(studioid):
         else:
             break
     return studiolist
+
+def truncate_string(input_string):
+    # Check if the string length is greater than 50
+    if len(input_string) > 50:
+        # Find the closest '-' or '_' character within the first 50 characters
+        closest_pos = max(input_string[:50].rfind('-'), input_string[:50].rfind('_'))
+
+        # If a '-' or '_' is found, truncate at that position
+        if closest_pos != -1:
+            return input_string[:closest_pos]
+        else:
+            # If no '-' or '_' is found, truncate at 50 characters
+            return input_string[:50]
+    return input_string
 
 
 if __name__ == "__main__":

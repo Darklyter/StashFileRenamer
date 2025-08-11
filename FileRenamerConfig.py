@@ -5,6 +5,14 @@ username = "<USERNAME>" #Don't include the '<' or '>'
 password = "<PASSWORD>" #Don't include the '<' or '>'
 ignore_ssl_warnings = True # Set to True if your Stash uses SSL w/ a self-signed cert
 ignore_tags = ['1','2','3318','6279'] # The ID numbers of tags to not write to NFO
+
+# === Output Directories ===
+scene_root = "P:/renamed/Scenes"         # Default root for scene files
+gallery_root = "P:/renamed/Galleries"  # Default root for gallery files
+
+# === Logging ===
+logfile_path = "P:/renamed/file_renamer.log"  # Path to log file
+
 # name_format is the resulting formatting of the filename for rename
 # available options are:
 # <STUDIO>      =   The name of the scene 'Studio'
@@ -16,8 +24,9 @@ ignore_tags = ['1','2','3318','6279'] # The ID numbers of tags to not write to N
 # <TAGS>        =   The associated tag names, will be separated by ", "
 # <PERFORMERS>  =   Names of associated performers, separated by ", " and surrounded by ().  Ie. (Mia Malkova, Keisha Grey)
 # <DIMENSION>   =   Dimensions of the video in '[WIDTHxHEIGHT]' format.  Ie. [1920x1080]
+# <STUDIOID>    =   Studio ID / Studio Code for scene as pulled from Stashdb or TPDB
 # ~ name_format = "<STUDIO> - <DATE> - <TITLE> (<PERFORMERS>)"
-name_format = "<STUDIO> <DATE> <TITLE> <PERFORMERS> <DIMENSIONS>"
+name_format = "<STUDIO> <DATE> <TITLE> <PERFORMERS> [<STUDIOID>] <DIMENSIONS>"
 create_parental_path = True # If true, a directory structure will be created that includes
                             # subdirectories for all parental studios.  File will be
                             # moved to lowest level.
@@ -29,7 +38,7 @@ create_collection_tags = True # this one is strange, admittedly.  Stash 'Tags' a
                               # based on the site and parent studio, such as "Site: SiteName"
                               # and "Studio: StudioName".  Set this to False to disable creation
                               # of these tags.
-headers = ""
+headers = {}
 api_key = ""
 
 file_query = """
@@ -40,13 +49,13 @@ file_query = """
           modifier: INCLUDES } }
       ) {
         scenes {
-          path
           id
           title
           details
+          code
           url
           date
-          rating
+          rating100
           paths{
             screenshot
             stream
@@ -74,9 +83,10 @@ file_query = """
               name
             }
           }
-          file{
+          files{
             width
             height
+            path
           }
         }
       }
