@@ -1,303 +1,378 @@
-# A simple python script to iterate through files in the directory, then
-# rename and create Kodi style sidecar files from Stash queries
-# It will create an NFO and background jpg from Stash metadata
-# Files will be moved to a subdirectory tree based on Studio parents
-# as defined in Stash
-# The query is based on filename, so if the file has not been scraped /
-# tagged in Stash then it will be skipped.  It uses the Studio attribute
-# to determine whether to parse or not
-# Most code 'borrowed' heavily from WithoutPants' Kodi Helper (https://github.com/stashapp/CommunityScripts/tree/main/scripts/kodi-helper)
-# and the TPDB Stash scraper (https://github.com/ThePornDatabase/stash_theporndb_scraper)
 import argparse
 import os
 import re
 import string
-import argparse
 import json
 import glob
 import requests
 import shutil
 import logging
+import sys
 
 import FileRenamerConfig as config
 
-def parseArgs():
+
+class SkipDryRunFilter(logging.Filter):
+    def filter(self, record):
+        return not getattr(record, 'dryrun', False)
+
+
+class Summary:
+    def __init__(self):
+        self.total_files = 0
+        self.renamed = 0
+        self.skipped = 0
+        self.errors = 0
+
+    def report(self):
+        logging.info("=== Summary Report ===")
+        logging.info(f"Total files processed: {self.total_files}")
+        logging.info(f"Files renamed:         {self.renamed}")
+        logging.info(f"Files skipped:         {self.skipped}")
+        logging.info(f"Errors encountered:    {self.errors}")
+
+
+def parse_args():
     parser = argparse.ArgumentParser(description="Rename files from Stash metadata and create accompanying NFO files")
-    parser.add_argument("--indir", metavar="<input directory>", help="Directory containing files to process (Default to '.')",default="./")
-    parser.add_argument("--outdir", metavar="<output directory>", help="Generate files in <outdir> (Default to '.')",default="./")
-    parser.add_argument("--mask", metavar="<filemask>", help="File mask to process.  Defaults to '*'", default="*")
-    parser.add_argument("--extra", help="Also write JPG and NFO files", default=False)
+    parser.add_argument("--indir", default="./", help="Directory containing files to process")
+    parser.add_argument("--outdir", default="./", help="Base output directory for renamed files")  # ✅ Add this line
+    parser.add_argument("--mask", default="*", help="File mask to process")
+    parser.add_argument("--extra", action="store_true", help="Also write JPG and NFO files")
+    parser.add_argument("--dryrun", action="store_true", help="Preview changes without moving files")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--sceneroot", default=config.scene_root, help="Root directory for scene files")
+    parser.add_argument("--galleryroot", default=config.gallery_root, help="Root directory for gallery files")
     return parser.parse_args()
 
-def main():
-    args = parseArgs()
 
-    if config.use_https:
-        server = 'https://' + str(config.server_ip) + ':' + str(config.server_port)
-    else:
-        server = 'http://' + str(config.server_ip) + ':' + str(config.server_port)
-    config.server = server
-    config.auth = setAuth(server)
-
-    # Iterate through current directory
-    # ~ filelist = [f for f in os.listdir('.') if os.path.isfile(f)]
-    filelist = glob.glob(args.mask.strip())
-    if filelist:
-        filelist = [f for f in filelist if os.path.isfile(f)]
-        for file in filelist:
-            # ~ print(file)
-            basename = os.path.splitext(file)[0]
-            basename = basename.strip()
-            basename = basename.rstrip(string.punctuation)
-
-            part_num = re.search(r'(.*)-\d+$', basename)
-            if part_num and ".zip" in file:
-                basename = part_num.group(1)
-
-            # ~ print(basename)
-            query = config.file_query.replace("<FILENAME>", basename)
-            jsonresult = callGraphQL(query, config.server, config.auth)
-            # We only want to process files that have a Studio defined
+def ensure_directories(args):
+    for path in [args.sceneroot, args.galleryroot]:
+        if not os.path.exists(path):
             try:
-                if len(jsonresult['data']['findScenes']['scenes']):
-                    if jsonresult and not jsonresult['data']['findScenes']['scenes'][0]['studio'] is None:
-                        filedata = {}
-                        filedata['jsondata'] = jsonresult['data']['findScenes']['scenes'][0]
-                        if len(filedata['jsondata']['files']) == 1:
-                            filedata['studiolist'] = get_parental_path(filedata['jsondata']['studio']['id'])
-                            filedata['filename'] = file
-                            filedata['basename'] = os.path.splitext(file)[0]
-                            filedata['extension'] = os.path.splitext(filedata['filename'])[-1]
-                            filedata['fullpathname'] = renamefile(filedata, args)
-
-                            if 'extras' in args:
-                                if args.extras:
-                                    getimage(filedata)
-                                    nfodata = generateNFO(filedata['jsondata'], args)
-                                    writeFile(filedata['fullpathname'] + ".nfo", nfodata, True)
-                        else:
-                            print(f" *** Aborting rename due to multiple files being present in Stash.  {file}")
-                    else:
-                        print(f' *** Scene data not found for {basename}')
-                else:
-                        print(f' *** File not found in Stash database: {basename}')
+                os.makedirs(path)
+                logging.info(f"Created missing directory: {path}")
             except Exception as e:
-                ## ~ if not os.path.exists("NotInStash"):
-                    ## ~ os.makedirs("NotInStash",exist_ok = True)
-                ## ~ print(f' Moving file: {basename} into NotInStash/ due to {e}')
-                ## ~ shutil.move(file, "NotInStash/" + file)
-                print(f' Error Ocurred due to {e}')
+                logging.error(f"Failed to create directory {path}: {e}")
 
-def callGraphQL(query, server, http_auth_type, retry = True):
-    graphql_server = server+"/graphql"
-    json = {}
-    json['query'] = query
-    # ~ print(query)
+
+def setup_logging(verbose):
+    level = logging.DEBUG if verbose else logging.INFO
+    handlers = [logging.StreamHandler(sys.stdout)]
+
+    if config.logfile_path:
+        try:
+            file_handler = logging.FileHandler(config.logfile_path, mode='a', encoding='utf-8')
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s: %(message)s'))
+
+            # ⛔️ Skip dryrun entries in the file log
+            file_handler.addFilter(SkipDryRunFilter())
+
+            handlers.append(file_handler)
+        except Exception as e:
+            print(f"⚠️ Failed to set up file logging: {e}")
+
+    logging.basicConfig(level=level, format='%(levelname)s: %(message)s', handlers=handlers)
+
+
+def validate_config():
+    required = [config.server_ip, config.server_port]
+    if not all(required):
+        logging.error("Missing required config values: server_ip or server_port")
+        sys.exit(1)
+
+    config.server = build_server_url()
+
+
+def build_server_url():
+    protocol = "https" if config.use_https else "http"
+    return f"{protocol}://{config.server_ip}:{config.server_port}"
+
+
+def set_auth(server):
     try:
-        if http_auth_type == "basic":
-            response = requests.post(graphql_server, json=json, headers=config.headers, auth=(username, password), verify= not config.ignore_ssl_warnings)
-        elif http_auth_type == "jwt":
-            response = requests.post(graphql_server, json=json, headers=config.headers, cookies={'session':auth_token}, verify= not config.ignore_ssl_warnings)
+        r = requests.get(f"{server}/playground", verify=not config.ignore_ssl_warnings)
+        if r.history and r.history[-1].status_code == 302:
+            config.auth = "jwt"
+            jwt_auth(server)
+        elif r.status_code == 200:
+            config.auth = "none"
         else:
-            response = requests.post(graphql_server, json=json, headers=config.headers, verify= not config.ignore_ssl_warnings)
-
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("error", None):
-                for error in result["error"]["errors"]:
-                    logging.error("GraphQL error:  {}".format(error), exc_info=debug_mode)
-            if result.get("data", None):
-                return result
-        elif retry and response.status_code == 401 and http_auth_type == "jwt":
-            jwtAuth()
-            return callGraphQL(query, variables, False)
-        else:
-            logging.error("GraphQL query failed to run by returning code of {}. Query: {}.".format(response.status_code, query))
-            raise Exception("GraphQL error")
-    except requests.exceptions.SSLError:
-        proceed = input("Caught certificate error trying to talk to Stash. Add ignore_ssl_warnings=True to your configuration.py to ignore permanently. Ignore for now? (yes/no):")
-        if proceed == 'y' or proceed == 'Y' or proceed =='Yes' or proceed =='yes':
-            ignore_ssl_warnings =True
-            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-            return callGraphQL(query, variables)
-        else:
-            print("Exiting.")
-            sys.exit()
-
-def setAuth(server):
-    global http_auth_type
-    r = requests.get(server+"/playground", verify= not config.ignore_ssl_warnings)
-    if len(r.history)>0 and r.history[-1].status_code == 302:
-        http_auth_type="jwt"
-        jwtAuth()
-    elif r.status_code == 200:
-        http_auth_type="none"
-    else:
-        http_auth_type="basic"
-    return http_auth_type
+            config.auth = "basic"
+    except requests.RequestException as e:
+        logging.error(f"Failed to connect to server: {e}")
+        sys.exit(1)
 
 
-def jwtAuth():
-    response = requests.post(server+"/login", data={'username':config.username, 'password':config.password}, verify= not config.ignore_ssl_warnings)
-    auth_token=response.cookies.get('session',None)
-    if not auth_token:
-        logging.error("Error authenticating with Stash.  Double check your IP, Port, Username, and Password", exc_info=debug_mode)
-        sys.exit()
+def jwt_auth(server):
+    try:
+        response = requests.post(f"{server}/login", data={'username': config.username, 'password': config.password}, verify=not config.ignore_ssl_warnings)
+        token = response.cookies.get('session')
+        if not token:
+            logging.error("JWT authentication failed")
+            sys.exit(1)
+        config.headers['Authorization'] = f"Bearer {token}"
+    except requests.RequestException as e:
+        logging.error(f"JWT auth error: {e}")
+        sys.exit(1)
 
 
-def renamefile(filedata, args):
-    nameformat = config.name_format
-    # Need to create folder structure if not there
-    fullpath = args.outdir.strip()
+def get_file_list(indir, mask):
+    pattern = os.path.join(indir, mask)
+    return [f for f in glob.glob(pattern) if os.path.isfile(f)]
 
-    # Have to handle Gallery files
-    if ".zip" in filedata['extension'].lower():
-        fullpath = fullpath + "Galleries/"
-        set_gallery = True
-    else:
-        set_gallery = False
 
-    if config.create_parental_path:
-        for item in reversed(filedata['studiolist']):
-            studiopath = re.sub(r'[^-a-zA-Z0-9_.() ]+', '', filedata['studiolist'][item])
-            fullpath = fullpath + studiopath.strip() + "/"
-            fullpath = fullpath.title()
-        if not os.path.exists(fullpath):
-            os.makedirs(fullpath, exist_ok=True)
+def call_graphql(query):
+    try:
+        response = requests.post(f"{config.server}/graphql", json={'query': query}, headers=config.headers, verify=not config.ignore_ssl_warnings)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error(f"GraphQL query failed: {e}")
+        return {}
 
-    # Set up filename to use
-    data=filedata['jsondata']
-    performers = []
+
+def fetch_metadata(basename):
+    query = config.file_query.replace("<FILENAME>", basename)
+    result = call_graphql(query)
+    if not result or not isinstance(result, dict):
+        logging.error(f"No result returned for query: {basename}")
+        return {}
+
+    logging.debug(f"GraphQL response for {basename}:\n{json.dumps(result, indent=2)}")
+    return result
+
+
+def should_process(scene_data):
+    return scene_data and scene_data.get("studio")
+
+
+def get_parental_path(studioid):
+    basequery = """
+        query {
+          findStudio(id: "<STUDIONUM>") {
+            id
+            name
+            parent_studio {
+              id
+            }
+          }
+        }
+    """
+    studiolist = {}
     counter = 0
-    for performer in data['performers']:
-        if counter < 3:
-            performers.append(performer['name'])
-            counter += 1
-    if performers:
-        performerstring = ", ".join(performers)
-        performerstring = f"({performerstring.strip()})"
+
+    while studioid:
+        query = basequery.replace("<STUDIONUM>", studioid)
+        result = call_graphql(query)
+
+        if not isinstance(result, dict):
+            logging.error(f"Invalid response type for studio ID {studioid}: {type(result)}")
+            break
+
+        data = result.get('data')
+        if not isinstance(data, dict):
+            logging.error(f"No 'data' field in response for studio ID {studioid}")
+            break
+
+        studio = data.get('findStudio')
+        if not isinstance(studio, dict):
+            logging.warning(f"Studio ID {studioid} not found or returned null.")
+            break
+
+        name = studio.get('name', f"UnknownStudio_{studioid}")
+        studiolist[counter] = name
+
+        parent = studio.get('parent_studio', None)
+        if parent is None:
+            logging.debug(f"Studio ID {studioid} has no parent. Ending path trace.")
+            break
+
+        if not isinstance(parent, dict):
+            logging.warning(f"Unexpected parent_studio format for studio ID {studioid}: {type(parent)}")
+            break
+
+        studioid = parent.get('id')
+        if not studioid:
+            logging.debug("Parent studio has no ID. Ending path trace.")
+            break
+
+        counter += 1
+
+    if not studiolist:
+        studiolist[0] = "Uncategorized"
+
+    return studiolist
+
+
+def truncate_string(s, max_length=50):
+    if len(s) <= max_length:
+        return s
+    for sep in ['-', '_']:
+        pos = s[:max_length].rfind(sep)
+        if pos != -1:
+            return s[:pos]
+    return s[:max_length]
+
+
+def build_output_path(filedata, args):
+    path = args.outdir
+    if ".zip" in filedata['extension'].lower():
+        path = args.galleryroot
     else:
-        performerstring = ""
+        path = args.sceneroot
 
-    tags = []
-    for tag in data['tags']:
-        tags.append(tag['name'])
-    if tags:
-        tagstring = ", ".join(tags)
+    studiolist = filedata.get('studiolist')
+    if not isinstance(studiolist, dict) or not studiolist:
+        logging.warning(f"No valid studio path found for {filedata['filename']}. Using fallback.")
+        studiolist = {0: "Uncategorized"}
+
+    for i in reversed(sorted(studiolist.keys())):
+        studiopath = re.sub(r'[^-a-zA-Z0-9_.() ]+', '', studiolist[i]).strip()
+        path = os.path.join(path, studiopath.title())
+
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception as e:
+        logging.error(f"Failed to create directory {path}: {e}")
+        path = args.outdir  # fallback to base output
+
+    return path
+
+
+def normalize_string(s):
+    return re.sub(r'[^a-zA-Z0-9]+', '', s).lower()
+
+
+def format_filename(filedata, args):
+    data = filedata['jsondata']
+
+    # Performers
+    performers = ", ".join([p['name'] for p in data.get('performers', [])[:3]])
+    performer_str = f"({performers})" if performers else ""
+
+    # Tags
+    tags = ", ".join([t['name'] for t in data.get('tags', [])])
+
+    # Dimensions
+    file_info = data.get('files', [{}])[0]
+    width = file_info.get('width')
+    height = file_info.get('height')
+    dimensions = f"[{width}x{height}]" if width and height else ""
+
+    # Title and Code
+    title = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data.get('title', 'Untitled')).title()
+    title = truncate_string(title, 100)
+    code = truncate_string(data.get('code', ''), 50)
+
+    normalized_title = normalize_string(title)
+    normalized_code = normalize_string(code)
+
+    if normalized_title == normalized_code:
+        if args.dryrun:
+            logging.info(f"[DRY-RUN] STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}", extra={'dryrun': True})
+        else:
+            logging.info(f"STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}")
+        name = config.name_format.replace(" [<STUDIOID>]", "")
+        name = name.replace("<STUDIOID>", "")
     else:
-        tagstring = ""
+        name = config.name_format
 
-    targetname = config.name_format
-    targetname = targetname.replace("<STUDIO>", data['studio']['name'].strip().title())
+    # Studio and Parent Studio
+    studio = data.get('studio')
+    studio_name = studio.get('name', 'UnknownStudio') if studio else 'UnknownStudio'
 
-    if not data['studio']['parent_studio'] is None:
-        parentname = data['studio']['parent_studio']['name'].strip().title()
+    parent = studio.get('parent_studio') if studio else None
+    if isinstance(parent, dict):
+        parent_name = parent.get('name', studio_name)
     else:
-        parentname = data['studio']['name'].strip().title()
+        parent_name = studio_name
 
-    dimensions = ""
-    if re.search(r'\[(\d+p)\]', filedata['filename']):
-        dimensions = re.search(r'(\[\d+p\])', filedata['filename']).group(1)
+    # Build filename
+    name = name.replace("<STUDIO>", studio_name.title())
+    name = name.replace("<PARENT>", parent_name.title())
+    name = name.replace("<TITLE>", string.capwords(title))
+    name = name.replace("<ID>", data.get('id', ''))
+    name = name.replace("<DATE>", data.get('date', ''))
+    name = name.replace("<STUDIOID>", code)
+    name = name.replace("<PERFORMERS>", performer_str)
+    name = name.replace("<TAGS>", tags)
+    name = name.replace("<DIMENSIONS>", dimensions)
+
+    # Final cleanup
+    return re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,]+', '', name)
+
+
+def move_file(filedata, targetname, dry_run):
+    fullpath = filedata['output_path']
+    extension = filedata['extension']
+    target = os.path.join(fullpath, targetname + extension)
+
+    if dry_run:
+        logging.info(f"[DRY-RUN] Would move: {filedata['filename']} → {target}", extra={'dryrun': True})
     else:
-        if not data['files'][0]['width'] is None and not data['files'][0]['height'] is None:
-            dimensions = F"[{str(data['files'][0]['width'])}x{str(data['files'][0]['height'])}]"
+        if os.path.exists(target):
+            logging.warning(f"Target file already exists: {target}. Skipping move.")
+            return None  # or return original path if you prefer
 
-    data['title'] = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data['title']).title()
+        logging.info(f"Moving: {filedata['filename']} → {target}")
+        shutil.move(filedata['filename'], target)
 
-    if len(data['title']) > 100:
-        data['title'] = data['title'].strip().title()[0:100]
+    return os.path.join(fullpath, targetname)
 
-    if len(data['code']) > 50:
-        data['code'] = truncate_string(data['code'].strip())
 
-    targetname = targetname.replace("<PARENT>", parentname)
-    targetname = targetname.replace("<TITLE>", string.capwords(data['title'].strip()))
-    targetname = targetname.replace("<ID>", data['id'].strip())
-    targetname = targetname.replace("<DATE>", data['date'].strip())
-    targetname = targetname.replace("<STUDIOID>", data['code'].strip())
-    if set_gallery:
-        targetname = targetname.replace("<PERFORMERS>", "")
-        targetname = targetname.replace("<TAGS>", "")
-        targetname = targetname.replace("<DIMENSIONS>", "")
+def get_image(filedata):
+    url = filedata['jsondata'].get('paths', {}).get('screenshot')
+    if url:
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            with open(filedata['fullpathname'] + ".jpg", "wb") as f:
+                f.write(response.content)
+        except requests.RequestException as e:
+            logging.warning(f"Image download failed: {e}")
     else:
-        targetname = targetname.replace("<PERFORMERS>", performerstring)
-        targetname = targetname.replace("<TAGS>", tagstring)
-        targetname = targetname.replace("<DIMENSIONS>", dimensions)
-    if re.search(r'([\\/])', targetname):
-        addpath = re.search(r'(.*[\\/])', targetname).group(1)
-        fullpath = fullpath + addpath
-        fullpath = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,\\/]+', '', fullpath).title()
-
-        if not os.path.exists(fullpath):
-            os.makedirs(fullpath, exist_ok=True)
-        targetname = re.search(r'.*[\\/](.*?)$', targetname).group(1)
-    targetname = re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,]+', '', targetname)
-
-    # Have to strip possible S##E## for Plex
-    if re.search(r'([sS]\d{1,3}:?[eE]\d{1,3})', targetname):
-        targetname = re.sub(r'[sS]\d{1,3}:?[eE]\d{1,3}', '', targetname).title()
-
-    # Now move the file
-    filepathname = fullpath + targetname
-    filepathname = filepathname.replace("  ", " ").strip()
-    extension = os.path.splitext(filedata['filename'])[-1]
-
-    if len(os.getcwd() + filepathname) > 255:
-        filepathname = filepathname.replace(performerstring, "")
-
-    origfile = filedata['filename']
-
-    if len(origfile) < 75:
-        spaces = 75 - len(origfile)
-    else:
-        spaces = 0
-
-    part_num = re.search(r'-(\d+)\.\w+$', origfile)
-    if part_num:
-        part_num = part_num.group(1)
-        filepathname = f"{filepathname}-File{part_num}"
-
-    print(f' Moving file: {origfile} {spaces * " "}To: {filepathname.lstrip("./")}')
-    shutil.move(origfile, filepathname + extension)
-    # ~ shutil.copy(origfile, filepathname + os.path.splitext(filedata['filename'])[-1])
-
-    # Return the path and bare filename to be used for NFO and JPG
-    return filepathname
+        logging.info(f"No screenshot for {filedata['filename']}")
 
 
-def getimage(filedata):
-    if not filedata['jsondata']['paths'] is None:
-        imagepath = filedata['jsondata']['paths']['screenshot']
-        filepath = filedata['fullpathname'] + ".jpg"
-        response = requests.get(imagepath)
-        imagefile = open(filepath, "wb")
-        imagefile.write(response.content)
-        imagefile.close()
-    else:
-        filename = filedata['fullpathname']
-        print(f'No Screenshot found for {filename}')
+def generate_nfo(scene):
+    tags = ""
+    if config.create_collection_tags:
+        parent = scene['studio'].get('parent_studio', {}).get('name', scene['studio']['name'])
+        tags += f"<tag>Site: {scene['studio']['name']}</tag>\n"
+        tags += f"<tag>Studio: {parent}</tag>\n"
 
+    genres = "\n".join([
+        f"<genre>{t['name']}</genre>"
+        for t in scene['tags']
+        if t['id'] not in config.ignore_tags and "ambiguous" not in t['name'].lower()
+    ])
 
-def addAPIKey(url):
-    if config.api_key:
-        return url + "&apikey=" + config.api_key
-    return url
+    performers = "\n".join([
+        f"""    <actor>
+        <name>{p['name']}</name>
+        <role></role>
+        <order>{i}</order>
+        <thumb>{p['image_path']}</thumb>
+    </actor>""" for i, p in enumerate(scene['performers'])
+    ])
 
+    thumbs = f"<thumb aspect='poster'>{scene['paths']['screenshot']}</thumb>"
+    fanart = f"<fanart><thumb>{scene['paths']['screenshot']}</thumb></fanart>"
 
-def getSceneTitle(scene):
-    if scene["title"] is not None and scene["title"] != "":
-        return scene["title"]
+    rating = str(int(scene['rating']) * 2) if scene.get('rating') else ""
+    date = scene.get('date', "")
+    studio = scene['studio']['name']
+    title = scene.get('title', "Untitled")
+    plot = scene.get('details', "")
+    scene_id = scene['id']
 
-    return basename(scene["path"])
-
-
-def generateNFO(scene, args):
-    ret = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <movie>
     <title>{title}</title>
     <userrating>{rating}</userrating>
-    <plot>{details}</plot>
-    <uniqueid type="stash">{id}</uniqueid>
+    <plot>{plot}</plot>
+    <uniqueid type="stash">{scene_id}</uniqueid>
     {tags}
     <premiered>{date}</premiered>
     <studio>{studio}</studio>
@@ -307,133 +382,124 @@ def generateNFO(scene, args):
     {genres}
 </movie>
 """
-    # ~ tags = ""
-    # ~ for t in scene["tags"]:
-    # ~ tags = tags + """
-    # ~ <tag>{}</tag>""".format(t["name"])
-
-    genres = ""
-    for t in scene["tags"]:
-        if t['id'] not in config.ignore_tags and "ambiguous" not in t['name'].lower():
-            genres = genres + """
-        <genre>{}</genre>""".format(t["name"])
-
-    rating = ""
-    if scene["rating"] is not None:
-        rating = str(int(scene["rating"]) * 2)
-
-    date = ""
-    if scene["date"] is not None:
-        date = scene["date"]
-
-    studio = ""
-    logo = ""
-    if scene["studio"] is not None:
-        studio = scene["studio"]["name"]
-        logo = scene["studio"]["image_path"]
-        if not logo.endswith("?default=true"):
-            logo = addAPIKey(logo)
-        else:
-            logo = ""
-
-    performers = ""
-    i = 0
-    for p in scene["performers"]:
-        thumb = addAPIKey(p["image_path"])
-        performers = performers + """
-    <actor>
-        <name>{}</name>
-        <role></role>
-        <order>{}</order>
-        <thumb>{}</thumb>
-    </actor>""".format(p["name"], i, thumb)
-        i += 1
-
-    thumbs = [
-        """<thumb aspect="poster">{}</thumb>""".format(addAPIKey(scene["paths"]["screenshot"]))
-    ]
-    fanart = [
-        """<thumb>{}</thumb>""".format(addAPIKey(scene["paths"]["screenshot"]))
-    ]
-    if logo != "":
-        thumbs.append("""<thumb aspect="clearlogo">{}</thumb>""".format(logo))
-        fanart.append("""<thumb>{}</thumb>""".format(logo))
-
-    fanart = """<fanart>{}</fanart>""".format("\n".join(fanart))
-
-    if not scene['studio']['parent_studio'] is None:
-        parent = scene['studio']['parent_studio']['name']
-    else:
-        parent = scene['studio']['name']
-    if config.create_collection_tags:
-        tags = '<tag>Site: {}</tag>\n'.format(scene['studio']['name'])
-        tags += '<tag>Studio: {}</tag>\n'.format(parent)
-    else:
-        tags = ""
-
-    # ~ genres = []
-    # ~ if args.genre != None:
-    # ~ for g in args.genre:
-    # ~ genres.append("<genre>{}</genre>".format(g))
-
-    ret = ret.format(title=getSceneTitle(scene), rating=rating, id=scene["id"], tags=tags, date=date, studio=studio, performers=performers, details=scene["details"] or "", thumbs="\n".join(thumbs), fanart=fanart, genres=genres)
-
-    return ret
 
 
-def writeFile(fn, data, useUTF):
-    encoding = None
-    if useUTF:
-        encoding = "utf-8-sig"
-    f = open(fn, "w", encoding=encoding)
-    f.write(data)
-    f.close()
+def write_file(filename, content, use_utf=True):
+    encoding = "utf-8-sig" if use_utf else None
+    try:
+        with open(filename, "w", encoding=encoding) as f:
+            f.write(content)
+        logging.info(f"Wrote file: {filename}")
+    except Exception as e:
+        logging.error(f"Failed to write file {filename}: {e}")
 
 
-def get_parental_path(studioid):
-    basequery = """
-        query {
-          findStudio(
-            id: "<STUDIONUM>"
-          ) {
-            id
-            name
-            parent_studio{
-              id
-            }
-          }
+def process_file(file, args):
+    basename = os.path.splitext(os.path.basename(file))[0].strip().rstrip(string.punctuation)
+    part_match = re.search(r'(.*)-\d+$', basename)
+    if part_match and ".zip" in file:
+        basename = part_match.group(1)
+
+    logging.debug(f"Querying for: {basename}")
+    metadata = fetch_metadata(basename)
+
+    if not isinstance(metadata, dict):
+        logging.error(f"Metadata is not a dictionary for {basename}")
+        return "error"
+
+    data = metadata.get('data')
+    if not isinstance(data, dict):
+        logging.error(f"No 'data' field in GraphQL response for {basename}")
+        return "error"
+
+    find_scenes = data.get('findScenes')
+    if not isinstance(find_scenes, dict):
+        logging.error(f"'findScenes' field missing or invalid for {basename}")
+        return "error"
+
+    scenes = find_scenes.get('scenes')
+    if not isinstance(scenes, list) or not scenes:
+        logging.warning(f"No scenes found for {basename}")
+        return "skipped"
+
+    scene = scenes[0]
+
+    if not should_process(scene):
+        logging.warning(f"Scene data missing studio info: {basename}")
+        return "skipped"
+
+    if not isinstance(scene.get('files'), list) or len(scene['files']) != 1:
+        logging.warning(f"Multiple or missing files in Stash for {file}. Skipping.")
+        return "skipped"
+
+    studio = scene.get('studio')
+    studio_id = studio.get('id') if isinstance(studio, dict) else None
+    if not studio_id:
+        logging.warning(f"No studio ID found for {basename}. Skipping.")
+        return "skipped"
+
+    try:
+        filedata = {
+            'jsondata': scene,
+            'filename': file,
+            'basename': basename,
+            'extension': os.path.splitext(file)[-1],
+            'studiolist': get_parental_path(studio_id)
         }
-    """
-    query = basequery.replace("<STUDIONUM>", studioid)
-    jsonresult = callGraphQL(query, config.server, config.auth)
-    counter = 0
-    studiolist = {}
-    studioid = jsonresult['data']['findStudio']['id']
-    while True:
-        query = basequery.replace("<STUDIONUM>", studioid)
-        jsonresult = callGraphQL(query, config.server, config.auth)
-        studiolist[counter] = jsonresult['data']['findStudio']['name']
-        if not jsonresult['data']['findStudio']['parent_studio'] is None:
-            studioid = jsonresult['data']['findStudio']['parent_studio']['id']
-            jsonresult = {}
-            counter += 1
-        else:
-            break
-    return studiolist
 
-def truncate_string(input_string):
-    # Check if the string length is greater than 50
-    if len(input_string) > 50:
-        # Find the closest '-' or '_' character within the first 50 characters
-        closest_pos = max(input_string[:50].rfind('-'), input_string[:50].rfind('_'))
+        filedata['output_path'] = build_output_path(filedata, args)
+        targetname = format_filename(filedata, args)
+        filedata['fullpathname'] = move_file(filedata, targetname, args.dryrun)
+        if not filedata['fullpathname']:
 
-        # If a '-' or '_' is found, truncate at that position
-        if closest_pos != -1:
-            return input_string[:closest_pos]
-        else:
-            # If no '-' or '_' is found, truncate at 50 characters
-            return input_string[:50]
-    return input_string
+            if args.dryrun:
+                logging.info(f"[DRY-RUN] File \'{filedata['filename']}\' not moved due to existing target: {targetname}", extra={'dryrun': True})
+            else:
+                logging.warning(f"File \'{filedata['filename']}\' not moved due to existing target: {targetname}")
+            return "skipped"
+
+        if args.extra:
+            get_image(filedata)
+            nfo = generate_nfo(scene)
+            write_file(filedata['fullpathname'] + ".nfo", nfo, use_utf=True)
+
+        return "renamed"
+
+    except Exception as e:
+        logging.error(f"Unhandled error processing {file}: {e}")
+        logging.debug(f"Scene data: {json.dumps(scene, indent=2)}")
+        return "error"
+
+
+def main():
+    args = parse_args()
+    setup_logging(args.verbose)
+
+    validate_config()  # ✅ This must be called before anything uses config.server
+    ensure_directories(args)
+
+    summary = Summary()
+    files = get_file_list(args.indir, args.mask)
+
+    if not files:
+        logging.warning("No files found to process.")
+        return
+
+    for file in files:
+        summary.total_files += 1
+        try:
+            result = process_file(file, args)
+            if result == "renamed":
+                summary.renamed += 1
+            elif result == "skipped":
+                summary.skipped += 1
+            else:
+                summary.errors += 1
+        except Exception as e:
+            logging.error(f"Unhandled error processing {file}: {e}")
+            summary.errors += 1
+
+    summary.report()
 
 
 if __name__ == "__main__":
