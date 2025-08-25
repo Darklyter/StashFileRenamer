@@ -261,46 +261,58 @@ def format_filename(filedata, args):
     dimensions = f"[{width}x{height}]" if width and height else ""
 
     # Title and Code
-    title = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data.get('title', 'Untitled')).title()
+    title = re.sub(r'[^-a-zA-Z0-9_.()\[\]\' ,]+', ' ', data.get('title', 'Untitled')).strip().title()
     title = truncate_string(title, 100)
     code = truncate_string(data.get('code', ''), 50)
 
     normalized_title = normalize_string(title)
     normalized_code = normalize_string(code)
 
+    # Check for fallback ID in original filename
+    fallback_id_match = re.search(r'\[(\d+)\]', filedata['basename'])
+    fallback_id = fallback_id_match.group(1) if fallback_id_match else ""
+    # Determine name format
     if normalized_title == normalized_code:
         if args.dryrun:
-            logging.info(f"[DRY-RUN] STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}", extra={'dryrun': True})
+            if fallback_id:
+                logging.info(f"[DRY-RUN] STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}.  Using Fallback ID of [{fallback_id}] Instead.", extra={'dryrun': True})
+            else:
+                logging.info(f"[DRY-RUN] STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}", extra={'dryrun': True})
         else:
-            logging.info(f"STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}")
-        name = config.name_format.replace(" [<STUDIOID>]", "")
-        name = name.replace("<STUDIOID>", "")
+            if fallback_id:
+                logging.info(f"STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}.  Using Fallback ID of [{fallback_id}] Instead.")
+            else:
+                logging.info(f"STUDIOID removed from filename due to equality with TITLE in Stash data for: {filedata['filename']}")
+        if fallback_id:
+            name = config.name_format.replace("<STUDIOID>", fallback_id)
+        else:
+            name = config.name_format.replace(" [<STUDIOID>]", "")
     else:
-        name = config.name_format
+        name = config.name_format.replace("<STUDIOID>", code)
 
     # Studio and Parent Studio
     studio = data.get('studio')
     studio_name = studio.get('name', 'UnknownStudio') if studio else 'UnknownStudio'
 
     parent = studio.get('parent_studio') if studio else None
-    if isinstance(parent, dict):
-        parent_name = parent.get('name', studio_name)
-    else:
-        parent_name = studio_name
+    parent_name = parent.get('name', studio_name) if isinstance(parent, dict) else studio_name
 
     # Build filename
     name = name.replace("<STUDIO>", studio_name.title())
     name = name.replace("<PARENT>", parent_name.title())
     name = name.replace("<TITLE>", string.capwords(title))
-    name = name.replace("<ID>", data.get('id', ''))
+    name = name.replace("<ID>", str(data.get('id', '')))
     name = name.replace("<DATE>", data.get('date', ''))
-    name = name.replace("<STUDIOID>", code)
     name = name.replace("<PERFORMERS>", performer_str)
     name = name.replace("<TAGS>", tags)
     name = name.replace("<DIMENSIONS>", dimensions)
 
-    # Final cleanup
-    return re.sub(r'[^-a-zA-Z0-9_\.()\[\]\' ,]+', '', name)
+    # Final cleanup: sanitize filename
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', name)  # Remove illegal filesystem characters
+    name = re.sub(r'\s+', ' ', name).strip()           # Collapse whitespace
+    name = re.sub(r'[^\w\-.,()\[\]\' ]+', '', name)    # Remove any remaining unsafe characters
+
+    return name
 
 
 def move_file(filedata, targetname, dry_run):
@@ -395,7 +407,9 @@ def write_file(filename, content, use_utf=True):
 
 
 def process_file(file, args):
-    basename = os.path.splitext(os.path.basename(file))[0].strip().rstrip(string.punctuation)
+    safe = ']'
+    unsafe = ''.join(c for c in string.punctuation if c not in safe)
+    basename = os.path.splitext(os.path.basename(file))[0].strip().rstrip(unsafe)
     part_match = re.search(r'(.*)-\d+$', basename)
     if part_match and ".zip" in file:
         basename = part_match.group(1)
